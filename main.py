@@ -8,7 +8,7 @@ import csv
 import scipy
 from vae_model import VAE
 from block_env import BlockEnv
-from utils import render_image, ReplayMemory, DQN, optimize_model, eval_task
+from utils import get_embedding, ReplayMemory, DQN, optimize_model, eval_task
 from torch.autograd import Variable
 
 parser = argparse.ArgumentParser()
@@ -22,6 +22,14 @@ parser.add_argument('--transition_file', type=str,
                     default="randact_s0.12_2_data_10000.npy")
 parser.add_argument('--save_path', type=str,
                     default="q-learning-results-image")
+parser.add_argument('-state', action="store_true",
+                    help="either image or state")
+parser.add_argument('-embdist', action="store_true",
+                    help="either truedist or embdist")
+parser.add_argument('-infdata', action="store_true",
+                    help="either smalldata or infdata")
+parser.add_argument('-shapedreward', action="store_true",
+                    help="either binary or shaped reward")
 # parser.add_argument('--n_trajs', type=int, default=301,
 #                     help="First n_trajs trajectories are used for actions.")
 args = parser.parse_args()
@@ -30,7 +38,16 @@ embedding_params = os.path.join(args.path_prefix, args.embedding_params)
 test_data = os.path.join(args.path_prefix, args.test_data)
 transition_file = os.path.join(args.path_prefix, args.transition_file)
 save_path = os.path.join(args.path_prefix, args.save_path)
-
+is_image = not args.state
+is_truedist = not args.embdist
+is_smalldata = not args.infdata
+is_binaryreward = not args.shapedreward
+print(["image" if is_image else "state"] +
+      ["truedist" if is_truedist else "embdist"] +
+      ["binaryreward" if is_binaryreward else ""])
+kwargs = {}
+if not is_truedist:
+    assert is_image
 # n_trajs = args.n_trajs
 
 with open(test_data, 'rb') as f:
@@ -39,8 +56,10 @@ raw_transitions = np.load(transition_file)
 if not os.path.exists(save_path):
     os.makedirs(save_path)
 
-model = VAE(image_channels=3, z_dim=10).cuda()
-model.load_state_dict(torch.load(embedding_params))
+if is_image:
+    model = VAE(image_channels=3, z_dim=10).cuda()
+    model.load_state_dict(torch.load(embedding_params))
+    kwargs['model'] = model
 
 """
 Set up the environment
@@ -52,25 +71,30 @@ env.viewer_setup()
 """
 Make transitions
 """
-n_trajs = 330
-# n_trajs = len(raw_transitions)
+n_trajs = 330 if is_smalldata else len(raw_transitions)
 print("Number of transitions: %d" % sum([len(raw_transitions[i]) for i in range(n_trajs)]))
 transitions = []
 for i in range(n_trajs):
-    for t in range(len(raw_transitions[i])-1):
-        o, o_next, true_s, true_s_next = raw_transitions[i][t][0],\
-                                         raw_transitions[i][t+1][0], \
-                                         raw_transitions[i][t][1]['state'],\
-                                         raw_transitions[i][t+1][1]['state']
+    for t in range(len(raw_transitions[i]) - 1):
+        o, o_next, true_s, true_s_next = raw_transitions[i][t][0], \
+                                         raw_transitions[i][t + 1][0], \
+                                         raw_transitions[i][t][1]['state'], \
+                                         raw_transitions[i][t + 1][1]['state']
         if o.sum() != 0 and o_next.sum() != 0:
             with torch.no_grad():
-                # s = [np.array([1])]
-                # s_next = [np.array([1])]
-                s = model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o, (2, 0, 1))[None])))[1].cpu().numpy()
-                s_next = model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o_next,(2,0,1))[None])))[1].cpu().numpy()
+                if not is_image:
+                    s = [np.array([1])]
+                    s_next = [np.array([1])]
+                else:
+                    s = model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o, (2, 0, 1))[None])))[
+                        1].cpu().numpy()
+                    s_next = model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o_next, (2, 0, 1))[None])))[
+                        1].cpu().numpy()
             transitions.append((o, o_next,
-                                s[0].astype(np.float64), s_next[0].astype(np.float64),
-                                true_s[1:, :2].reshape(-1), true_s_next[1:, :2].reshape(-1)))
+                                s[0].astype(np.float64),
+                                s_next[0].astype(np.float64),
+                                true_s[1:, :2].reshape(-1),
+                                true_s_next[1:, :2].reshape(-1)))
 print("o shape: ", transitions[0][0].shape)
 print("s embedding shape: ", transitions[0][2].shape)
 print("true s shape: ", transitions[0][4].shape)
@@ -85,25 +109,20 @@ GAMMA = 0.999
 TARGET_UPDATE = 20
 d_state = 10
 d_action = 4
-shaped_reward = False
-
-# env.reset(start)
-# o_start = scipy.misc.imresize(env.render(mode='rgb_array'),
-#                                (64, 64, 3),
-#                                interp='nearest')
-# env.reset(goal)
-# o_goal = scipy.misc.imresize(env.render(mode='rgb_array'),
-#                                (64, 64, 3),
-#                                interp='nearest')
-# with torch.no_grad():
-#     s_start = model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o_start, (2, 0, 1))[None])))[0].cpu().numpy()
-#     s_goal = model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o_goal, (2, 0, 1))[None])))[0].cpu().numpy()
+is_embdist = not is_truedist
+is_shapedreward = not is_binaryreward
 
 for i_task, (start, goal) in enumerate(test_tasks):
     print("\n\n### Task %d ###" % i_task)
     """
     Set up
     """
+    if is_embdist:
+        env.reset(goal)
+        o_goal = env.render(mode='rgb_array')
+        s_goal = get_embedding(o_goal, model).cpu().numpy()
+        kwargs["emb_goal"] = s_goal
+
     policy_net = DQN(d_state, d_action).cuda()
     target_net = DQN(d_state, d_action).cuda()
 
@@ -123,14 +142,20 @@ for i_task, (start, goal) in enumerate(test_tasks):
     for trans in transitions:
         o, o_next, s, s_next, ts, ts_next = trans
         a = ts_next - ts
-        rad = np.linalg.norm(ts_next - goal.reshape(-1), 2)
+        if is_embdist:
+            rad = np.linalg.norm(s_next - kwargs["emb_goal"], 2)
+            threshold = 3.5
+            kwargs["emb_threshold"] = threshold
+        else:
+            rad = np.linalg.norm(ts_next - goal.reshape(-1), 2)
+            threshold = 0.5
         r = -1
-        if rad < 0.5:
+        if rad < threshold:
             count += 1
             # print(ts_next)
             r = 0
             s_next = None
-        if shaped_reward:
+        if is_shapedreward:
             r -= rad
         memory.push(s, a, s_next, r)
     print("Number of goals reached in transitions: %d" % count)
@@ -150,29 +175,34 @@ for i_task, (start, goal) in enumerate(test_tasks):
                                    BATCH_SIZE)
             if it % TARGET_UPDATE == 0:
                 target_net.load_state_dict(policy_net.state_dict())
-        pred_v, real_dist, reward = eval_task(env, policy_net, start,
-                                              goal, i_task, model=model)
+        pred_v, real_dist, emb_dist, reward, emb_reward = eval_task(env,
+                                                          policy_net, start,
+                                                          goal, i_task,
+                                                          **kwargs)
         print("Epoch %d:: avg loss: %.3f, pred v: %.3f, real dist: %.3f, reward: %d" %
               (epoch, loss / n_iters, pred_v, real_dist, reward))
         with open(os.path.join(save_path, "%d/log.csv" % i_task), 'a') as f:
             writer = csv.writer(f)
             if epoch == 0:
                 writer.writerow(["epoch",
-                                 "avg loss"
+                                 "avg loss",
                                  "predicted v",
                                  "real distance",
-                                 "reward"])
+                                 "embed distance",
+                                 "reward",
+                                 "embed reward"])
             writer.writerow([epoch, loss / n_iters,
-                             pred_v, real_dist, reward])
+                             pred_v, real_dist, emb_dist,
+                             reward, emb_reward])
 
     """
     Saving results
     """
-    pred_v, real_dist, reward = eval_task(env, policy_net, start,
-                                          goal, i_task,
-                                          save_path=save_path,
-                                          is_render=True,
-                                          model=model)
+    pred_v, real_dist, emb_dist, reward, emb_reward = eval_task(env, policy_net, start,
+                                                      goal, i_task,
+                                                      save_path=save_path,
+                                                      is_render=True,
+                                                      **kwargs)
     print("final predicted v: ", pred_v)
     print("final real distance: ", real_dist)
     print("final reward: ", reward)
@@ -183,5 +213,8 @@ for i_task, (start, goal) in enumerate(test_tasks):
             writer.writerow(["task",
                              "final predicted v",
                              "final real distance",
-                             "final reward"])
-        writer.writerow([i_task, pred_v, real_dist, reward])
+                             "final embed distance",
+                             "final reward",
+                             "final embed reward"])
+        writer.writerow([i_task, pred_v, real_dist,
+                         emb_dist, reward, emb_reward])

@@ -121,6 +121,11 @@ def optimize_model(memory,
 
 
 def get_embedding(img, model):
+    """
+    :param img: raw image from Mujoco render
+    :param model: an embedding model
+    :return: an embedding vector in torch Variable
+    """
     o_goal = scipy.misc.imresize(img,
                                  (64, 64, 3),
                                  interp='nearest')
@@ -129,10 +134,13 @@ def get_embedding(img, model):
 
 
 def eval_task(env, policy_net, start, goal, i_task,
-              save_path=None, is_render=False, model=None):
+              save_path=None, is_render=False, model=None,
+              emb_goal=None, emb_threshold=None):
     env.reset(start)
     np_cur_s = start
+    cur_s = None
     reward = 0
+    emb_reward = 0
     for i in range(30):
         if is_render:
             env.render()
@@ -141,7 +149,11 @@ def eval_task(env, policy_net, start, goal, i_task,
                 os.makedirs(os.path.join(save_path, "%d" % i_task))
             render_image(env, os.path.join(save_path, "%d/%d.png" % (i_task, i)))
         if model is not None:
-            cur_s = get_embedding(env.render(mode='rgb_array'), model)
+            if cur_s is None:
+                cur_s = get_embedding(env.render(mode='rgb_array'), model)
+            # There is some stochasticity in rendering images.
+            # assert torch.eq(cur_s,
+            #                 get_embedding(env.render(mode='rgb_array'), model))
         else:
             cur_s = Variable(torch.zeros(1, 4)).cuda()
             cur_s[0, :2] = Variable(torch.cuda.FloatTensor(np_cur_s[0]))
@@ -151,10 +163,19 @@ def eval_task(env, policy_net, start, goal, i_task,
         rad = np.linalg.norm(np_cur_s - goal, 2)
         if rad > 0.5:
             reward -= 1
+        if emb_goal is not None:
+            assert emb_threshold is not None
+            cur_s = get_embedding(env.render(mode='rgb_array'), model)
+            np_emb_cur_s = cur_s.cpu().numpy()
+            emb_rad = np.linalg.norm(np_emb_cur_s - emb_goal, 2)
+            if emb_rad > emb_threshold:
+                emb_reward -= 1
+
     pred_v = cur_v.data[0]
     real_dist = np.linalg.norm(np_cur_s - goal, 2)
+    emb_dist = 0 if emb_goal is not None else emb_rad
     if save_path:
         env.reset(goal)
         env.render()
         render_image(env, os.path.join(save_path, "%d/goal.png" % i_task))
-    return pred_v, real_dist, reward
+    return pred_v, real_dist, emb_dist, reward, emb_reward
