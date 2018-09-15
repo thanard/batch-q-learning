@@ -173,7 +173,7 @@ def eval_task(env, policy_net, start, goal, i_task,
 
     pred_v = cur_v.data[0]
     real_dist = np.linalg.norm(np_cur_s - goal, 2)
-    emb_dist = 0 if emb_goal is not None else emb_rad
+    emb_dist = 0 if emb_goal is None else emb_rad
     if save_path:
         env.reset(goal)
         env.render()
