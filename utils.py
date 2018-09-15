@@ -119,9 +119,15 @@ def optimize_model(memory,
     optimizer.step()
     return loss.data[0]
 
+def get_embedding(img, model):
+    o_goal = scipy.misc.imresize(img,
+                                 (64, 64, 3),
+                                 interp='nearest')
+    with torch.no_grad():
+        return model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o_goal, (2, 0, 1))[None])))[1]
 
 def eval_task(env, policy_net, start, goal, i_task,
-              save_path=None, is_render=False):
+              save_path=None, is_render=False, model=None):
     env.reset(start)
     np_cur_s = start
     reward = 0
@@ -132,10 +138,12 @@ def eval_task(env, policy_net, start, goal, i_task,
             if not os.path.exists(os.path.join(save_path, "%d" % i_task)):
                 os.makedirs(os.path.join(save_path, "%d" % i_task))
             render_image(env, os.path.join(save_path, "%d/%d.png" % (i_task, i)))
-        cur_s = Variable(torch.zeros(1, 4)).cuda()
-        cur_s[0, :2] = Variable(torch.cuda.FloatTensor(np_cur_s[0]))
-        cur_s[0, 2:] = Variable(torch.cuda.FloatTensor(np_cur_s[1]))
-        #     print(cur_s)
+        if model is not None:
+            cur_s = get_embedding(env.render(mode='rgb_array'), model)
+        else:
+            cur_s = Variable(torch.zeros(1, 4)).cuda()
+            cur_s[0, :2] = Variable(torch.cuda.FloatTensor(np_cur_s[0]))
+            cur_s[0, 2:] = Variable(torch.cuda.FloatTensor(np_cur_s[1]))
         cur_v, cur_a = max_actions(policy_net, cur_s)
         np_cur_s = env.step_only(cur_a.cpu().numpy())[1:, :2]
         rad = np.linalg.norm(np_cur_s - goal, 2)
@@ -145,5 +153,6 @@ def eval_task(env, policy_net, start, goal, i_task,
     real_dist = np.linalg.norm(np_cur_s - goal, 2)
     if save_path:
         env.reset(goal)
+        env.render()
         render_image(env, os.path.join(save_path, "%d/goal.png" % i_task))
     return pred_v, real_dist, reward

@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import torch.optim as optim
 import csv
+import scipy
 from vae_model import VAE
 from block_env import BlockEnv
 from utils import render_image, ReplayMemory, DQN, optimize_model, eval_task
@@ -20,7 +21,7 @@ parser.add_argument('--test_data', type=str,
 parser.add_argument('--transition_file', type=str,
                     default="randact_s0.12_2_data_10000.npy")
 parser.add_argument('--save_path', type=str,
-                    default="q-learning-results")
+                    default="q-learning-results-image")
 # parser.add_argument('--n_trajs', type=int, default=301,
 #                     help="First n_trajs trajectories are used for actions.")
 args = parser.parse_args()
@@ -46,10 +47,7 @@ Set up the environment
 """
 env = BlockEnv()
 env.reset()
-env.render()
 env.viewer_setup()
-render_image(env, os.path.join(save_path, "1.png"))
-env.reset(raw_transitions[0][0][1]['state'][1:, :2])
 
 """
 Make transitions
@@ -66,11 +64,13 @@ for i in range(n_trajs):
                                          raw_transitions[i][t+1][1]['state']
         if o.sum() != 0 and o_next.sum() != 0:
             with torch.no_grad():
-                s = [np.array([1])]
-                s_next = [np.array([1])]
-                # s = model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o, (2, 0, 1))[None])))[0].cpu().numpy()
-                # s_next = model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o_next,(2,0,1))[None])))[0].cpu().numpy()
-            transitions.append((o, o_next, s[0], s_next[0], true_s[1:, :2].reshape(-1), true_s_next[1:, :2].reshape(-1)))
+                # s = [np.array([1])]
+                # s_next = [np.array([1])]
+                s = model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o, (2, 0, 1))[None])))[1].cpu().numpy()
+                s_next = model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o_next,(2,0,1))[None])))[1].cpu().numpy()
+            transitions.append((o, o_next,
+                                s[0].astype(np.float64), s_next[0].astype(np.float64),
+                                true_s[1:, :2].reshape(-1), true_s_next[1:, :2].reshape(-1)))
 print("o shape: ", transitions[0][0].shape)
 print("s embedding shape: ", transitions[0][2].shape)
 print("true s shape: ", transitions[0][4].shape)
@@ -83,12 +83,23 @@ N_EPOCHS = 100
 BATCH_SIZE = 128
 GAMMA = 0.999
 TARGET_UPDATE = 1
-d_state = 4
+d_state = 10
 d_action = 4
+
+# env.reset(start)
+# o_start = scipy.misc.imresize(env.render(mode='rgb_array'),
+#                                (64, 64, 3),
+#                                interp='nearest')
+# env.reset(goal)
+# o_goal = scipy.misc.imresize(env.render(mode='rgb_array'),
+#                                (64, 64, 3),
+#                                interp='nearest')
+# with torch.no_grad():
+#     s_start = model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o_start, (2, 0, 1))[None])))[0].cpu().numpy()
+#     s_goal = model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o_goal, (2, 0, 1))[None])))[0].cpu().numpy()
 
 for i_task, (start, goal) in enumerate(test_tasks):
     print("\n\n### Task %d ###" % i_task)
-
     """
     Set up
     """
@@ -117,8 +128,8 @@ for i_task, (start, goal) in enumerate(test_tasks):
             count += 1
             # print(ts_next)
             r = 0
-            ts_next = None
-        memory.push(ts, a, ts_next, r)
+            s_next = None
+        memory.push(s, a, s_next, r)
     print("Number of goals reached in transitions: %d" % count)
 
     """
@@ -134,7 +145,8 @@ for i_task, (start, goal) in enumerate(test_tasks):
                                    optimizer,
                                    GAMMA,
                                    BATCH_SIZE)
-        pred_v, real_dist, reward = eval_task(env, policy_net, start, goal, i_task)
+        pred_v, real_dist, reward = eval_task(env, policy_net, start,
+                                              goal, i_task, model=model)
         print("Epoch %d:: avg loss: %.3f, pred v: %.3f, real dist: %.3f, reward: %d" %
               (epoch, loss / n_iters, pred_v, real_dist, reward))
         with open(os.path.join(save_path, "%d/log.csv" % i_task), 'a') as f:
@@ -153,8 +165,11 @@ for i_task, (start, goal) in enumerate(test_tasks):
     """
     Saving results
     """
-    pred_v, real_dist, reward = eval_task(env, policy_net, start, goal, i_task,
-                                  save_path=save_path, is_render=True)
+    pred_v, real_dist, reward = eval_task(env, policy_net, start,
+                                          goal, i_task,
+                                          save_path=save_path,
+                                          is_render=True,
+                                          model=model)
     print("final predicted v: ", pred_v)
     print("final real distance: ", real_dist)
     print("final reward: ", reward)

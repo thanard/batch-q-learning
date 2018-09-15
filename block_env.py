@@ -2,6 +2,7 @@ import numpy as np
 from rllab.envs.base import Step
 from rllab.envs.mujoco.mujoco_env import MujocoEnv
 from rllab.core.serializable import Serializable
+from rllab.mujoco_py import MjViewer
 
 num_blocks = 2
 block_size = .12
@@ -34,10 +35,11 @@ class BlockEnv(MujocoEnv, Serializable):
     def get_current_obs(self):
         return self.model.data.geom_xpos
 
-    def viewer_setup(self):
-        self.viewer.cam.trackbodyid = 0
-        self.viewer.cam.distance = 2.75
-        self.viewer.cam.elevation = -60
+    def viewer_setup(self, config=None):
+        viewer = self.get_viewer(config=config)
+        viewer.cam.trackbodyid = 0
+        viewer.cam.distance = 2.75
+        viewer.cam.elevation = -60
 
     def step(self, action):
         done = False
@@ -50,3 +52,10 @@ class BlockEnv(MujocoEnv, Serializable):
     def step_only(self, action):
         next_state = self.get_current_obs()[1:, :2] + action.reshape(2, 2)
         return self.reset(init_state=next_state)
+
+    def get_viewer(self, config):
+        if self.viewer is None:
+            self.viewer = MjViewer(visible=False)
+            self.viewer.start()
+            self.viewer.set_model(self.model)
+        return self.viewer
