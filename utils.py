@@ -119,12 +119,14 @@ def optimize_model(memory,
     optimizer.step()
     return loss.data[0]
 
+
 def get_embedding(img, model):
     o_goal = scipy.misc.imresize(img,
                                  (64, 64, 3),
                                  interp='nearest')
     with torch.no_grad():
         return model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o_goal, (2, 0, 1))[None])))[1]
+
 
 def eval_task(env, policy_net, start, goal, i_task,
               save_path=None, is_render=False, model=None):

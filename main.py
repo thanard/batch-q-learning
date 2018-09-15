@@ -82,9 +82,10 @@ Batch Q-Learning
 N_EPOCHS = 100
 BATCH_SIZE = 128
 GAMMA = 0.999
-TARGET_UPDATE = 1
+TARGET_UPDATE = 20
 d_state = 10
 d_action = 4
+shaped_reward = False
 
 # env.reset(start)
 # o_start = scipy.misc.imresize(env.render(mode='rgb_array'),
@@ -129,6 +130,8 @@ for i_task, (start, goal) in enumerate(test_tasks):
             # print(ts_next)
             r = 0
             s_next = None
+        if shaped_reward:
+            r -= rad
         memory.push(s, a, s_next, r)
     print("Number of goals reached in transitions: %d" % count)
 
@@ -145,6 +148,8 @@ for i_task, (start, goal) in enumerate(test_tasks):
                                    optimizer,
                                    GAMMA,
                                    BATCH_SIZE)
+            if it % TARGET_UPDATE == 0:
+                target_net.load_state_dict(policy_net.state_dict())
         pred_v, real_dist, reward = eval_task(env, policy_net, start,
                                               goal, i_task, model=model)
         print("Epoch %d:: avg loss: %.3f, pred v: %.3f, real dist: %.3f, reward: %d" %
@@ -159,8 +164,6 @@ for i_task, (start, goal) in enumerate(test_tasks):
                                  "reward"])
             writer.writerow([epoch, loss / n_iters,
                              pred_v, real_dist, reward])
-        if epoch % TARGET_UPDATE == 0:
-            target_net.load_state_dict(policy_net.state_dict())
 
     """
     Saving results

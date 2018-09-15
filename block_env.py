@@ -8,6 +8,7 @@ num_blocks = 2
 block_size = .12
 loc = (1.5 - block_size * 2)
 
+
 class BlockEnv(MujocoEnv, Serializable):
     global FILE
 
