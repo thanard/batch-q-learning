@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import torch.optim as optim
 import csv
-import scipy
+import pickle
 from vae_model import VAE
 from block_env import BlockEnv
 from utils import get_embedding, ReplayMemory, DQN, optimize_model, eval_task
@@ -44,6 +44,7 @@ is_smalldata = not args.infdata
 is_binaryreward = not args.shapedreward
 print(["image" if is_image else "state"] +
       ["truedist" if is_truedist else "embdist"] +
+      ["2K" if is_smalldata else "38K"] +
       ["binaryreward" if is_binaryreward else ""])
 kwargs = {}
 if not is_truedist:
@@ -71,30 +72,39 @@ env.viewer_setup()
 """
 Make transitions
 """
-n_trajs = 330 if is_smalldata else len(raw_transitions)
-print("Number of transitions: %d" % sum([len(raw_transitions[i]) for i in range(n_trajs)]))
-transitions = []
-for i in range(n_trajs):
-    for t in range(len(raw_transitions[i]) - 1):
-        o, o_next, true_s, true_s_next = raw_transitions[i][t][0], \
-                                         raw_transitions[i][t + 1][0], \
-                                         raw_transitions[i][t][1]['state'], \
-                                         raw_transitions[i][t + 1][1]['state']
-        if o.sum() != 0 and o_next.sum() != 0:
-            with torch.no_grad():
-                if not is_image:
-                    s = [np.array([1])]
-                    s_next = [np.array([1])]
-                else:
-                    s = model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o, (2, 0, 1))[None])))[
-                        1].cpu().numpy()
-                    s_next = model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o_next, (2, 0, 1))[None])))[
-                        1].cpu().numpy()
-            transitions.append((o, o_next,
-                                s[0].astype(np.float64),
-                                s_next[0].astype(np.float64),
-                                true_s[1:, :2].reshape(-1),
-                                true_s_next[1:, :2].reshape(-1)))
+filename = "processed_transition_2k.pkl" if is_smalldata else "processed_transition_38k.pkl"
+if os.path.exists(filename):
+    with open(filename, 'rb') as fp:
+        transitions = pickle.load(fp)
+else:
+    n_trajs = 330 if is_smalldata else len(raw_transitions)
+    print("Number of transitions: %d" % sum([len(raw_transitions[i]) for i in range(n_trajs)]))
+    transitions = []
+    for i in range(n_trajs):
+        for t in range(len(raw_transitions[i]) - 1):
+            o, o_next, true_s, true_s_next = raw_transitions[i][t][0], \
+                                             raw_transitions[i][t + 1][0], \
+                                             raw_transitions[i][t][1]['state'], \
+                                             raw_transitions[i][t + 1][1]['state']
+            if o.sum() != 0 and o_next.sum() != 0:
+                with torch.no_grad():
+                    if not is_image:
+                        s = [np.array([1])]
+                        s_next = [np.array([1])]
+                    else:
+                        s = model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o, (2, 0, 1))[None])))[
+                            1].cpu().numpy()
+                        s_next = model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o_next, (2, 0, 1))[None])))[
+                            1].cpu().numpy()
+                transitions.append((o, o_next,
+                                    s[0].astype(np.float64),
+                                    s_next[0].astype(np.float64),
+                                    true_s[1:, :2].reshape(-1),
+                                    true_s_next[1:, :2].reshape(-1)))
+    # Save transitions.
+    with open(filename, 'wb') as fp:
+        pickle.dump(transitions, fp)
+
 print("o shape: ", transitions[0][0].shape)
 print("s embedding shape: ", transitions[0][2].shape)
 print("true s shape: ", transitions[0][4].shape)
@@ -111,8 +121,11 @@ d_state = 10
 d_action = 4
 is_embdist = not is_truedist
 is_shapedreward = not is_binaryreward
+first_task, last_task = 40, 49
 
 for i_task, (start, goal) in enumerate(test_tasks):
+    if i_task < first_task or i_task > last_task:
+        continue
     print("\n\n### Task %d ###" % i_task)
     """
     Set up
