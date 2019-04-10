@@ -37,7 +37,7 @@ class BlockEnv(MujocoEnv, Serializable):
         return self.model.data.geom_xpos
 
     def viewer_setup(self, config=None):
-        viewer = self.get_viewer(config=config)
+        viewer = self.get_viewer()
         viewer.cam.trackbodyid = 0
         viewer.cam.distance = 2.75
         viewer.cam.elevation = -60
@@ -54,7 +54,7 @@ class BlockEnv(MujocoEnv, Serializable):
         next_state = self.get_current_obs()[1:, :2] + action.reshape(2, 2)
         return self.reset(init_state=next_state)
 
-    def get_viewer(self, config):
+    def get_viewer(self):
         if self.viewer is None:
             self.viewer = MjViewer(visible=False)
             self.viewer.start()

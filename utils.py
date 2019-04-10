@@ -8,6 +8,7 @@ import os
 import numpy as np
 from collections import namedtuple
 from torch.autograd import Variable
+from PIL import Image
 Transition = namedtuple('Transition',
                         ('state', 'action', 'next_state', 'reward'))
 
@@ -119,6 +120,19 @@ def optimize_model(memory,
     optimizer.step()
     return loss.data[0]
 
+def from_numpy_to_var(npx, dtype='float32'):
+    var = Variable(torch.from_numpy(npx.astype(dtype)))
+    if torch.cuda.is_available():
+        return var.cuda()
+    else:
+        return var
+
+def from_tensor_to_var(torch_arr):
+    var = Variable(torch_arr)
+    if torch.cuda.is_available():
+        return var.cuda()
+    else:
+        return var
 
 def get_embedding(img, model):
     """
@@ -129,9 +143,15 @@ def get_embedding(img, model):
     o_goal = scipy.misc.imresize(img,
                                  (64, 64, 3),
                                  interp='nearest')
+    # import ipdb
+    # ipdb.set_trace()
     with torch.no_grad():
         return model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o_goal, (2, 0, 1))[None])))[1]
 
+def from_numpy_to_pil(npy_img):
+    newimage = Image.new('RGB', (len(npy_img), len(npy_img)))
+    newimage.putdata([tuple(p) for row in npy_img for p in row])
+    return newimage
 
 def eval_task(env, policy_net, start, goal, i_task,
               save_path=None, is_render=False, model=None,

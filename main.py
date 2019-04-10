@@ -6,10 +6,12 @@ import torch
 import torch.optim as optim
 import csv
 import pickle
+from torchvision.utils import save_image
 from vae_model import VAE
 from block_env import BlockEnv
-from utils import get_embedding, ReplayMemory, DQN, optimize_model, eval_task
+from utils import get_embedding, ReplayMemory, DQN, optimize_model, eval_task, from_tensor_to_var, from_numpy_to_pil
 from torch.autograd import Variable
+from torchvision import datasets, transforms
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--path_prefix", type=str,
@@ -21,7 +23,7 @@ parser.add_argument('--test_data', type=str,
 parser.add_argument('--transition_file', type=str,
                     default="randact_s0.12_2_data_10000.npy")
 parser.add_argument('--save_path', type=str,
-                    default="q-learning-results-image")
+                    default="q-learning-results-image-redo")
 parser.add_argument('-state', action="store_true",
                     help="either image or state")
 parser.add_argument('-embdist', action="store_true",
@@ -62,6 +64,13 @@ if is_image:
     model.load_state_dict(torch.load(embedding_params))
     kwargs['model'] = model
 
+transform = transforms.Compose([
+    transforms.Resize(64),
+    transforms.CenterCrop(64),
+    transforms.ToTensor(),
+    # transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+])
+
 """
 Set up the environment
 """
@@ -88,17 +97,28 @@ else:
                                              raw_transitions[i][t + 1][1]['state']
             if o.sum() != 0 and o_next.sum() != 0:
                 with torch.no_grad():
-                    if not is_image:
-                        s = [np.array([1])]
-                        s_next = [np.array([1])]
-                    else:
-                        s = model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o, (2, 0, 1))[None])))[
-                            1].cpu().numpy()
-                        s_next = model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o_next, (2, 0, 1))[None])))[
-                            1].cpu().numpy()
+                    # if not is_image:
+                    #     s = [np.array([1])]
+                    #     s_next = [np.array([1])]
+                    # else:
+                    s = model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o, (2, 0, 1))[None])))[1]
+                    s_next = model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o_next, (2, 0, 1))[None])))[1]
+                    if i == 0 and t == 0:
+                        recon = model.decode(s)
+                        import ipdb; ipdb.set_trace()
+                        save_image(torch.cat([torch.cuda.FloatTensor(np.transpose(o, (2, 0, 1))[None]).cpu()/255, recon.data.cpu()], dim=0),
+                                   os.path.join(save_path, 'verified_img_preprocessing.png'))
+                    # import ipdb; ipdb.set_trace()
+                    # s = model.encode(from_tensor_to_var(transform(from_numpy_to_pil(o)))[None, :])[1]
+                    # s_next = model.encode(from_tensor_to_var(transform(from_numpy_to_pil(o_next)))[None, :])[1]
+                    # if i == 0 and t == 0:
+                    #     recon = model.decode(s)
+                    #     save_image(torch.cat([from_tensor_to_var(transform(from_numpy_to_pil(o)))[None, :], recon], dim=0).data.cpu(),
+                    #                os.path.join(save_path, 'verified_img_preprocessing.png'))
+
                 transitions.append((o, o_next,
-                                    s[0].astype(np.float64),
-                                    s_next[0].astype(np.float64),
+                                    s.cpu().numpy()[0].astype(np.float64),
+                                    s_next.cpu().numpy()[0].astype(np.float64),
                                     true_s[1:, :2].reshape(-1),
                                     true_s_next[1:, :2].reshape(-1)))
     # Save transitions.
@@ -170,6 +190,7 @@ for i_task, (start, goal) in enumerate(test_tasks):
             s_next = None
         if is_shapedreward:
             r -= rad
+        import ipdb; ipdb.set_trace()
         memory.push(s, a, s_next, r)
     print("Number of goals reached in transitions: %d" % count)
 
