@@ -97,17 +97,19 @@ else:
                                              raw_transitions[i][t + 1][1]['state']
             if o.sum() != 0 and o_next.sum() != 0:
                 with torch.no_grad():
-                    # if not is_image:
-                    #     s = [np.array([1])]
-                    #     s_next = [np.array([1])]
-                    # else:
-                    s = model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o, (2, 0, 1))[None])))[1]
-                    s_next = model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o_next, (2, 0, 1))[None])))[1]
-                    if i == 0 and t == 0:
-                        recon = model.decode(s)
-                        import ipdb; ipdb.set_trace()
-                        save_image(torch.cat([torch.cuda.FloatTensor(np.transpose(o, (2, 0, 1))[None]).cpu()/255, recon.data.cpu()], dim=0),
-                                   os.path.join(save_path, 'verified_img_preprocessing.png'))
+                    if not is_image:
+                        s = [np.array([1])]
+                        s_next = [np.array([1])]
+                    else:
+                        s = model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o, (2, 0, 1))[None])))[1]
+                        s_next = model.encode(Variable(torch.cuda.FloatTensor(np.transpose(o_next, (2, 0, 1))[None])))[1]
+                        if i == 0 and t == 0:
+                            recon = model.decode(s)
+                            import ipdb; ipdb.set_trace()
+                            save_image(torch.cat([torch.cuda.FloatTensor(np.transpose(o, (2, 0, 1))[None]).cpu()/255, recon.data.cpu()], dim=0),
+                                       os.path.join(save_path, 'verified_img_preprocessing.png'))
+                        s = s.cpu().numpy()
+                        s_next = s_next.cpu().numpy()
                     # import ipdb; ipdb.set_trace()
                     # s = model.encode(from_tensor_to_var(transform(from_numpy_to_pil(o)))[None, :])[1]
                     # s_next = model.encode(from_tensor_to_var(transform(from_numpy_to_pil(o_next)))[None, :])[1]
@@ -117,8 +119,8 @@ else:
                     #                os.path.join(save_path, 'verified_img_preprocessing.png'))
 
                 transitions.append((o, o_next,
-                                    s.cpu().numpy()[0].astype(np.float64),
-                                    s_next.cpu().numpy()[0].astype(np.float64),
+                                    s[0].astype(np.float64),
+                                    s_next[0].astype(np.float64),
                                     true_s[1:, :2].reshape(-1),
                                     true_s_next[1:, :2].reshape(-1)))
     # Save transitions.
@@ -137,11 +139,11 @@ N_EPOCHS = 100
 BATCH_SIZE = 128
 GAMMA = 0.999
 TARGET_UPDATE = 20
-d_state = 10
+d_state = 10 if is_image else 4
 d_action = 4
 is_embdist = not is_truedist
 is_shapedreward = not is_binaryreward
-first_task, last_task = 40, 49
+first_task, last_task = 0, 49
 
 for i_task, (start, goal) in enumerate(test_tasks):
     if i_task < first_task or i_task > last_task:
@@ -190,8 +192,10 @@ for i_task, (start, goal) in enumerate(test_tasks):
             s_next = None
         if is_shapedreward:
             r -= rad
-        import ipdb; ipdb.set_trace()
-        memory.push(s, a, s_next, r)
+        if not is_image:
+            memory.push(ts, a, ts_next, r)
+        else:
+            memory.push(s, a, s_next, r)
     print("Number of goals reached in transitions: %d" % count)
 
     """
